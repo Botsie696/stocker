@@ -1,0 +1,51 @@
+{
+  "status": "pending",
+  "scheduled_for": "2026-08-14T13:35:00Z",
+  "created_at": "2026-08-14T02:01:29.581981Z",
+  "dry_run": true,
+  "total_sell_usd": 500.0,
+  "total_buy_usd": 500.0,
+  "trades": [
+    {
+      "action": "SELL",
+      "ticker": "VOO",
+      "amount_usd": 300.0,
+      "reason": "Trim broad large-cap market exposure to fund a higher-beta niche growth sleeve, reducing large-cap redundancy with QQQM.",
+      "estimated_shares": 0.4194
+    },
+    {
+      "action": "SELL",
+      "ticker": "QQQM",
+      "amount_usd": 200.0,
+      "reason": "Reduce overlap with mega-cap tech already captured via VOO, freeing capital for concentrated semiconductor growth exposure.",
+      "estimated_shares": 0.6633
+    },
+    {
+      "action": "BUY",
+      "ticker": "SMH",
+      "amount_usd": 500.0,
+      "reason": "Add high-volatility, high-momentum (42% 6m) semiconductor concentration to align with the 69/100 aggressive risk setting.",
+      "estimated_shares": 0.8487
+    }
+  ],
+  "allowed_tickers": [
+    "AGG",
+    "AVLV",
+    "AVUV",
+    "BND",
+    "CALF",
+    "QQQM",
+    "RWJ",
+    "RZV",
+    "SCHD",
+    "SHY",
+    "SMH",
+    "SOXX",
+    "VIG",
+    "VOO",
+    "VYM",
+    "XLK"
+  ],
+  "max_trade_usd": 500.0,
+  "budget_usd": null
+}
