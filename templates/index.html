@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Portfolio Rebalancer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <div class="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
+
+    <header class="flex flex-wrap items-center justify-between gap-3 mb-6 sm:mb-8">
+      <div>
+        <h1 class="text-xl sm:text-2xl font-semibold">Portfolio Rebalancer</h1>
+        <p class="text-slate-400 text-xs sm:text-sm">Public.com + Claude · nothing executes without your approval</p>
+      </div>
+      <div class="flex items-center gap-2">
+        {% if dry_run %}
+        <span class="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 text-xs font-medium border border-amber-500/40">DRY RUN MODE</span>
+        {% else %}
+        <span class="px-3 py-1 rounded-full bg-red-500/20 text-red-300 text-xs font-medium border border-red-500/40">LIVE TRADING</span>
+        {% endif %}
+        <a href="/logout" class="text-xs text-slate-500 hover:text-slate-300 underline">Sign out</a>
+      </div>
+    </header>
+
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div class="bg-slate-900 rounded-xl p-4 border border-slate-800">
+        <div class="text-slate-400 text-xs mb-1">Total Value</div>
+        <div id="total-value" class="text-xl font-semibold">—</div>
+      </div>
+      <div class="bg-slate-900 rounded-xl p-4 border border-slate-800">
+        <div class="text-slate-400 text-xs mb-1">Cash Available</div>
+        <div id="cash-value" class="text-xl font-semibold">—</div>
+      </div>
+      <div class="bg-slate-900 rounded-xl p-4 border border-slate-800">
+        <div class="text-slate-400 text-xs mb-1">Market</div>
+        <div id="market-status" class="text-xl font-semibold">—</div>
+      </div>
+    </section>
+
+    <section id="cloud-task-section" class="bg-slate-900 rounded-xl p-4 border border-indigo-800/60 mb-6 hidden">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h2 class="font-medium text-slate-200">☁️ Next Scheduled Task (Cloud)</h2>
+        <a id="cloud-actions-link" href="{{ github_actions_url }}" target="_blank" rel="noopener" class="text-xs text-indigo-400 hover:text-indigo-300 underline">View on GitHub Actions →</a>
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4 text-sm">
+        <div>
+          <div class="text-slate-500 text-xs mb-0.5">Scheduled For</div>
+          <div id="cloud-task-time" class="font-medium">—</div>
+        </div>
+        <div>
+          <div class="text-slate-500 text-xs mb-0.5">Status</div>
+          <div id="cloud-task-status" class="font-medium">—</div>
+        </div>
+        <div>
+          <div class="text-slate-500 text-xs mb-0.5">Total Sell</div>
+          <div id="cloud-task-sell" class="font-medium text-red-400">—</div>
+        </div>
+        <div>
+          <div class="text-slate-500 text-xs mb-0.5">Total Buy</div>
+          <div id="cloud-task-buy" class="font-medium text-emerald-400">—</div>
+        </div>
+      </div>
+      <button id="cloud-task-cancel-btn" class="px-4 py-2 rounded-lg bg-red-900/40 hover:bg-red-900/60 text-red-300 text-sm font-medium">
+        Cancel Scheduled Task
+      </button>
+      <p id="cloud-task-note" class="text-xs text-slate-500 mt-2"></p>
+    </section>
+
+    <section class="bg-slate-900 rounded-xl p-4 border border-slate-800 mb-6">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h2 class="font-medium text-slate-200">Whitelisted Holdings</h2>
+        <span class="text-xs text-slate-500">{{ whitelist | join(', ') }}</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm min-w-[480px]">
+          <thead class="text-slate-400 text-left border-b border-slate-800">
+            <tr>
+              <th class="py-1.5">Ticker</th><th>Qty</th><th>Price</th><th>Value</th><th>Weight %</th><th>Gain %</th>
+            </tr>
+          </thead>
+          <tbody id="positions-body" class="divide-y divide-slate-800/60"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="flex flex-col sm:flex-row gap-3 mb-6">
+      <button id="refresh-btn" class="w-full sm:w-auto px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm font-medium">
+        Refresh Portfolio
+      </button>
+    </div>
+
+    <section class="bg-slate-900 rounded-xl p-4 border border-slate-800 mb-6">
+      <h2 class="font-medium text-slate-200 mb-4">Strategy</h2>
+
+      <div class="mb-5">
+        <div class="text-sm text-slate-300 mb-2">Mode</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2" id="mode-options">
+          <label class="mode-option flex flex-col gap-0.5 border border-slate-800 rounded-lg p-3 cursor-pointer hover:border-slate-600">
+            <span class="flex items-center gap-2 font-medium text-sm"><input type="radio" name="mode" value="1" checked>Mode 1 — Internal Rebalance</span>
+            <span class="text-xs text-slate-500 pl-5">Sell an underperforming holding, buy an outperforming one — both already owned.</span>
+          </label>
+          <label class="mode-option flex flex-col gap-0.5 border border-slate-800 rounded-lg p-3 cursor-pointer hover:border-slate-600">
+            <span class="flex items-center gap-2 font-medium text-sm"><input type="radio" name="mode" value="2">Mode 2 — External ETF Rotation</span>
+            <span class="text-xs text-slate-500 pl-5">Sell a worst-performing holding, buy a vetted unowned ETF using live market data.</span>
+          </label>
+          <label class="mode-option flex flex-col gap-0.5 border border-slate-800 rounded-lg p-3 cursor-pointer hover:border-slate-600">
+            <span class="flex items-center gap-2 font-medium text-sm"><input type="radio" name="mode" value="3">Mode 3 — Fresh Cash Buy</span>
+            <span class="text-xs text-slate-500 pl-5">No sells. Deploy the Budget below into whitelisted ETF(s).</span>
+          </label>
+          <label class="mode-option flex flex-col gap-0.5 border border-slate-800 rounded-lg p-3 cursor-pointer hover:border-slate-600">
+            <span class="flex items-center gap-2 font-medium text-sm"><input type="radio" name="mode" value="4">Mode 4 — Risk-Adjusted Optimization</span>
+            <span class="text-xs text-slate-500 pl-5">Ignores past performance; optimizes strictly to the Risk Tolerance slider.</span>
+          </label>
+          <label class="mode-option flex flex-col gap-0.5 border border-slate-800 rounded-lg p-3 cursor-pointer hover:border-slate-600">
+            <span class="flex items-center gap-2 font-medium text-sm"><input type="radio" name="mode" value="5">Mode 5 — Forward Opportunity Engine</span>
+            <span class="text-xs text-slate-500 pl-5">Zero past-performance bias. Ranks by forward P/E, forward earnings growth, and implied 12mo return. Flexible partial trims/buys. Requires &gt;=2.5pp improvement or holds.</span>
+          </label>
+          <label class="mode-option flex flex-col gap-0.5 border border-slate-800 rounded-lg p-3 cursor-pointer hover:border-slate-600">
+            <span class="flex items-center gap-2 font-medium text-sm"><input type="radio" name="mode" value="6">Mode 6 — Macro Regime &amp; Sector Rotation</span>
+            <span class="text-xs text-slate-500 pl-5">Aligns factor tilts with the 10-year yield / inflation trend and sector momentum.</span>
+          </label>
+          <label class="mode-option flex flex-col gap-0.5 border border-slate-800 rounded-lg p-3 cursor-pointer hover:border-slate-600">
+            <span class="flex items-center gap-2 font-medium text-sm"><input type="radio" name="mode" value="7">Mode 7 — Mean-Reversion &amp; Valuation</span>
+            <span class="text-xs text-slate-500 pl-5">Sells RSI&gt;70 overbought holdings, buys RSI&lt;38 oversold candidates.</span>
+          </label>
+          <label class="mode-option flex flex-col gap-0.5 border border-slate-800 rounded-lg p-3 cursor-pointer hover:border-slate-600">
+            <span class="flex items-center gap-2 font-medium text-sm"><input type="radio" name="mode" value="8">Mode 8 — Dynamic Tactical Rebalance</span>
+            <span class="text-xs text-slate-500 pl-5">Unconstrained: full-spectrum forward + macro evaluation, authorized to introduce net-new ETFs (not just current holdings) if they clear the 2.5pp hurdle.</span>
+          </label>
+        </div>
+
+        <div id="submode-row" class="hidden mt-3 flex flex-col sm:flex-row gap-2">
+          <label class="flex items-center gap-2 border border-slate-800 rounded-lg px-3 py-2 cursor-pointer hover:border-slate-600 text-sm">
+            <input type="radio" name="sub_mode" value="4A" checked>4A — Reallocate (may sell current holdings)
+          </label>
+          <label class="flex items-center gap-2 border border-slate-800 rounded-lg px-3 py-2 cursor-pointer hover:border-slate-600 text-sm">
+            <input type="radio" name="sub_mode" value="4B">4B — Fresh Cash (no sells, uses Budget)
+          </label>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+        <div>
+          <label class="text-sm text-slate-300 mb-2 block" for="budget-input">
+            Budget / Available Balance ($) <span id="budget-required-note" class="text-amber-400 text-xs hidden">— required for this mode</span>
+          </label>
+          <input id="budget-input" type="number" min="0" step="1" inputmode="decimal" placeholder="e.g. 2500 (blank = use .env default cap)"
+                 class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-base sm:text-sm focus:outline-none focus:border-indigo-500">
+          <p class="text-xs text-slate-500 mt-1">When set, this overrides the .env per-trade ceiling and caps the total of all BUY trades for this run.</p>
+        </div>
+
+        <div>
+          <label class="text-sm text-slate-300 mb-2 block" for="risk-slider">
+            Risk Tolerance — <span id="risk-value">50</span>/100 (<span id="risk-label">Moderate</span>)
+          </label>
+          <input id="risk-slider" type="range" min="1" max="100" value="50" class="w-full accent-indigo-500">
+          <div class="flex justify-between text-xs text-slate-500 mt-1">
+            <span>Conservative</span><span>Aggressive</span><span>Leveraged</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="mb-5">
+        <label class="text-sm text-slate-300 mb-2 block" for="custom-instructions">Custom Instructions (optional)</label>
+        <textarea id="custom-instructions" rows="2" placeholder='e.g. "Focus on high-dividend yield"'
+                  class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-base sm:text-sm focus:outline-none focus:border-indigo-500"></textarea>
+      </div>
+
+      <button id="analyze-btn" class="w-full sm:w-auto px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium">
+        Analyze with Claude
+      </button>
+    </section>
+
+    <section class="bg-slate-900 rounded-xl p-4 border border-slate-800 mb-6">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+        <h2 class="font-medium text-slate-200">GitHub Cloud Automation</h2>
+        <span id="gh-status-badge" class="text-[11px] px-2 py-0.5 rounded-full border border-slate-700 text-slate-500">checking…</span>
+      </div>
+      <p id="gh-mode-hint" class="text-xs text-slate-500 mb-4">Runs immediately in GitHub Actions, independent of this browser tab. Uses the Mode / Budget / Risk / Instructions selected above — Claude runs fresh in GitHub Actions. To schedule for later instead of right now, Analyze first and use the Schedule (Cloud) button below the proposed trades.</p>
+
+      <div class="flex items-center gap-2 mb-4">
+        <input id="gh-dry-run" type="checkbox" checked class="w-4 h-4 accent-indigo-500">
+        <label for="gh-dry-run" class="text-sm text-slate-300">Dry run (simulate only — uncheck to place real orders)</label>
+      </div>
+
+      <button id="gh-trigger-btn" class="w-full sm:w-auto px-4 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm font-medium">
+        ⚡ Run on GitHub Actions Now
+      </button>
+
+      <div id="gh-status-msg" class="text-xs mt-3 hidden"></div>
+    </section>
+
+    <section id="proposal-section" class="hidden">
+      <div class="bg-slate-900 rounded-xl p-4 border border-slate-800 mb-6">
+        <h2 class="font-medium text-slate-200 mb-2">Claude's Rationale</h2>
+        <p id="rationale" class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap"></p>
+      </div>
+
+      <div id="intel-section" class="bg-slate-900 rounded-xl p-4 border border-slate-800 mb-6 hidden">
+        <h2 class="font-medium text-slate-200 mb-2">Market Intelligence</h2>
+        <div id="intel-sources" class="flex flex-wrap gap-1.5 mb-3"></div>
+        <p id="intel-benchmark" class="text-xs text-slate-400 mb-2"></p>
+        <p id="intel-macro" class="text-xs text-slate-400 mb-2 hidden"></p>
+        <div id="intel-held-metrics" class="text-xs text-slate-500 mb-2"></div>
+        <div id="intel-headlines" class="text-xs text-slate-500 mb-2"></div>
+        <div id="intel-rejected" class="text-xs text-slate-500"></div>
+      </div>
+
+      <div class="bg-slate-900 rounded-xl p-4 border border-slate-800 mb-6">
+        <h2 class="font-medium text-slate-200 mb-3">Proposed Trades</h2>
+        <div class="overflow-x-auto mb-2">
+          <table class="w-full text-sm min-w-[480px]">
+            <thead class="text-slate-400 text-left border-b border-slate-800">
+              <tr><th class="py-1.5">Ticker</th><th>Action</th><th>Amount ($)</th><th>Est. Shares</th><th>Rationale</th></tr>
+            </thead>
+            <tbody id="trades-body" class="divide-y divide-slate-800/60"></tbody>
+          </table>
+        </div>
+        <div id="rejected-note" class="text-xs text-red-400 mt-2 hidden"></div>
+      </div>
+
+      <button id="approve-btn" class="w-full px-4 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold text-slate-950">
+        Approve &amp; Execute Actions
+      </button>
+
+      <div class="bg-slate-900 rounded-xl p-4 border border-indigo-800/60 mt-3">
+        <h3 class="text-sm font-medium text-slate-200 mb-1">⏰ Schedule for Market Open (Cloud)</h3>
+        <p class="text-xs text-slate-500 mb-3">
+          Commits <strong class="text-slate-300">these exact reviewed trades</strong> to the GitHub repo — no fresh Claude call, nothing re-analyzed. Runs entirely in GitHub Actions at the scheduled time; <strong class="text-slate-300">you can shut this Mac down</strong> right after committing.
+        </p>
+        <div class="flex items-center gap-2 mb-3">
+          <input id="cloud-schedule-dry-run" type="checkbox" checked class="w-4 h-4 accent-indigo-500">
+          <label for="cloud-schedule-dry-run" class="text-sm text-slate-300">Dry run (simulate only — uncheck to place real orders)</label>
+        </div>
+        <div class="flex flex-col sm:flex-row gap-3">
+          <button id="cloud-schedule-open-btn" class="w-full sm:w-auto px-4 py-2.5 rounded-lg bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-200 text-sm font-medium">
+            ⏰ Schedule for Market Open (Cloud)
+          </button>
+          <div class="w-full sm:w-auto flex-1">
+            <input id="cloud-schedule-custom-datetime" type="datetime-local"
+                   class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2.5 text-base sm:text-sm focus:outline-none focus:border-indigo-500">
+            <p class="text-[11px] text-slate-500 mt-1">Time is America/New_York (ET), regardless of your device's timezone.</p>
+          </div>
+          <button id="cloud-schedule-custom-btn" class="w-full sm:w-auto px-4 py-2.5 rounded-lg bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-200 text-sm font-medium">
+            Schedule for this time
+          </button>
+        </div>
+        <div id="cloud-schedule-status-msg" class="text-xs mt-3 hidden"></div>
+      </div>
+    </section>
+
+    <section id="execution-section" class="hidden mt-6">
+      <div class="bg-slate-900 rounded-xl p-4 border border-slate-800">
+        <h2 class="font-medium text-slate-200 mb-3">Execution</h2>
+        <div id="live-log" class="bg-black/60 rounded-lg p-3 mb-4 font-mono text-xs text-slate-300 h-48 overflow-y-auto space-y-0.5"></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm min-w-[480px]">
+            <thead class="text-slate-400 text-left border-b border-slate-800">
+              <tr><th class="py-1.5">Action</th><th>Ticker</th><th>Amount</th><th>Status</th><th>Detail</th></tr>
+            </thead>
+            <tbody id="log-body" class="divide-y divide-slate-800/60"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <div id="error-box" class="hidden mt-6 bg-red-950/60 border border-red-800 text-red-300 text-sm rounded-lg p-4"></div>
+  </div>
+
+  <style>
+    .mode-option:has(input:checked) { border-color: rgb(99 102 241); background: rgba(99,102,241,0.08); }
+  </style>
+
+  <script>
+    const fmtUSD = (n) => (n ?? 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+    // Every scheduled time in this app (market open, custom pickers) is
+    // America/New_York — always display it that way explicitly, labeled,
+    // rather than plain toLocaleString() (which silently renders in the
+    // viewer's own device timezone and looks "wrong" to anyone not in ET,
+    // e.g. 9:35am ET showing as 6:35am with no explanation on a Pacific
+    // device).
+    const fmtET = (isoString) => new Date(isoString).toLocaleString('en-US', {
+      timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short',
+    }) + ' ET';
+    let currentBatchId = null;
+    let currentTradeCount = 0;
+
+    function showError(msg) {
+      const box = document.getElementById('error-box');
+      box.textContent = msg;
+      box.classList.remove('hidden');
+    }
+    function clearError() {
+      document.getElementById('error-box').classList.add('hidden');
+    }
+
+    function riskLabel(v) {
+      if (v <= 25) return 'Conservative';
+      if (v <= 55) return 'Moderate';
+      if (v < 80) return 'Aggressive';
+      return 'Leveraged/Niche';
+    }
+
+    function updateModeUI() {
+      const mode = document.querySelector('input[name="mode"]:checked').value;
+      document.getElementById('submode-row').classList.toggle('hidden', mode !== '4');
+      const subMode = mode === '4' ? document.querySelector('input[name="sub_mode"]:checked').value : null;
+      const needsBudget = mode === '3' || (mode === '4' && subMode === '4B');
+      document.getElementById('budget-required-note').classList.toggle('hidden', !needsBudget);
+    }
+
+    document.querySelectorAll('input[name="mode"], input[name="sub_mode"]').forEach(el => {
+      el.addEventListener('change', updateModeUI);
+    });
+    document.getElementById('risk-slider').addEventListener('input', (e) => {
+      document.getElementById('risk-value').textContent = e.target.value;
+      document.getElementById('risk-label').textContent = riskLabel(parseInt(e.target.value, 10));
+    });
+    updateModeUI();
+
+    function currentModeSelection() {
+      const mode = document.querySelector('input[name="mode"]:checked').value;
+      const subMode = mode === '4' ? document.querySelector('input[name="sub_mode"]:checked').value : null;
+      const budgetRaw = document.getElementById('budget-input').value;
+      return {
+        mode,
+        sub_mode: subMode,
+        budget_usd: budgetRaw ? Number(budgetRaw) : null,
+        risk_tolerance: parseInt(document.getElementById('risk-slider').value, 10),
+        custom_instructions: document.getElementById('custom-instructions').value,
+      };
+    }
+
+    async function loadState() {
+      clearError();
+      try {
+        const res = await fetch('/api/state');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'failed to load state');
+
+        document.getElementById('total-value').textContent = fmtUSD(data.total_value);
+        document.getElementById('cash-value').textContent = fmtUSD(data.cash);
+        const marketEl = document.getElementById('market-status');
+        marketEl.textContent = data.market_hours_open ? 'Open' : 'Closed';
+        marketEl.className = 'text-xl font-semibold ' + (data.market_hours_open ? 'text-emerald-400' : 'text-slate-500');
+
+        const body = document.getElementById('positions-body');
+        body.innerHTML = '';
+        if (data.positions.length === 0) {
+          body.innerHTML = '<tr><td class="py-2 text-slate-500" colspan="6">No whitelisted ETF positions held.</td></tr>';
+        }
+        for (const p of data.positions) {
+          const tr = document.createElement('tr');
+          const gainClass = (p.gain_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400';
+          tr.innerHTML = `
+            <td class="py-1.5 font-medium">${p.ticker}</td>
+            <td>${p.quantity}</td>
+            <td>${fmtUSD(p.last_price)}</td>
+            <td>${fmtUSD(p.market_value)}</td>
+            <td>${p.weight_pct != null ? p.weight_pct.toFixed(2) + '%' : '—'}</td>
+            <td class="${gainClass}">${p.gain_pct != null ? p.gain_pct.toFixed(2) + '%' : '—'}</td>`;
+          body.appendChild(tr);
+        }
+      } catch (e) {
+        showError(e.message);
+      }
+    }
+
+    function renderIntel(mi) {
+      const section = document.getElementById('intel-section');
+      if (!mi) { section.classList.add('hidden'); return; }
+      section.classList.remove('hidden');
+
+      const sourcesEl = document.getElementById('intel-sources');
+      sourcesEl.innerHTML = '';
+      const labels = {yfinance: 'yfinance', fred_macro: 'FRED (S&P 500)', finviz_momentum: 'finviz', stockdex_justetf: 'stockdex/justETF', morningstar_headlines: 'Morningstar'};
+      for (const [key, label] of Object.entries(labels)) {
+        const used = !!(mi.sources_used || {})[key];
+        const span = document.createElement('span');
+        span.className = 'text-[11px] px-2 py-0.5 rounded-full border ' + (used ? 'border-emerald-600 text-emerald-400' : 'border-slate-700 text-slate-600');
+        span.textContent = (used ? '✓ ' : '– ') + label;
+        sourcesEl.appendChild(span);
+      }
+
+      const bm = mi.sp500_benchmark || {};
+      document.getElementById('intel-benchmark').textContent =
+        `S&P 500 benchmark: 3mo ${bm.momentum_3m_pct ?? '—'}%, 6mo ${bm.momentum_6m_pct ?? '—'}%`;
+
+      const macroEl = document.getElementById('intel-macro');
+      if (mi.macro_regime) {
+        const m = mi.macro_regime;
+        const sectors = Object.entries(m.sector_momentum_3m_pct || {}).map(([k, v]) => `${k} ${v ?? '—'}%`).join(', ');
+        macroEl.textContent = `Macro: 10Y yield ${m.treasury_10y_pct ?? '—'}% (${m.treasury_10y_trend ?? '—'}), breakeven inflation ${m.breakeven_inflation_pct ?? '—'}% (${m.breakeven_inflation_trend ?? '—'}), S&P vs 200d SMA ${m.sp500_vs_200sma_pct ?? '—'}%. Sector 3mo momentum: ${sectors}`;
+        macroEl.classList.remove('hidden');
+      } else {
+        macroEl.classList.add('hidden');
+      }
+
+      const heldEl = document.getElementById('intel-held-metrics');
+      const hm = mi.held_metrics || [];
+      heldEl.textContent = hm.length
+        ? 'Holdings signals: ' + hm.map(h => {
+            const parts = [`${h.ticker}`];
+            if (h.rsi_14 != null) parts.push(`RSI ${h.rsi_14} (${h.rsi_signal})`);
+            if (h.implied_12m_return_pct != null) parts.push(`implied 12mo ${h.implied_12m_return_pct}%`);
+            return parts.join(' ');
+          }).join(' · ')
+        : '';
+
+      const headlinesEl = document.getElementById('intel-headlines');
+      headlinesEl.innerHTML = (mi.headlines && mi.headlines.length)
+        ? 'Recent ETF headlines: ' + mi.headlines.join(' · ')
+        : '';
+
+      const rejEl = document.getElementById('intel-rejected');
+      const rc = mi.rejected_candidates || [];
+      rejEl.textContent = rc.length
+        ? `Candidates excluded: ${rc.map(r => `${r.ticker} (${r.reason})`).join('; ')}`
+        : '';
+    }
+
+    async function analyze() {
+      clearError();
+      const btn = document.getElementById('analyze-btn');
+      btn.disabled = true;
+      btn.textContent = 'Analyzing…';
+      try {
+        const payload = currentModeSelection();
+
+        const res = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'analysis failed');
+
+        currentBatchId = data.batch_id;
+        currentTradeCount = data.trades.length;
+        updateGithubModeHint();
+        document.getElementById('rationale').textContent = data.rationale;
+        renderIntel(data.market_intelligence);
+
+        const body = document.getElementById('trades-body');
+        body.innerHTML = '';
+        if (data.trades.length === 0) {
+          body.innerHTML = '<tr><td class="py-2 text-slate-500" colspan="5">No trades proposed.</td></tr>';
+        }
+        for (const t of data.trades) {
+          const tr = document.createElement('tr');
+          const actionClass = t.action === 'BUY' ? 'text-emerald-400' : 'text-red-400';
+          const fullTag = t.is_full_liquidation ? ' <span class="text-[10px] px-1.5 py-0.5 rounded border border-amber-600 text-amber-400 align-middle">FULL</span>' : '';
+          tr.innerHTML = `
+            <td class="py-1.5 font-medium">${t.ticker}${fullTag}</td>
+            <td class="font-semibold ${actionClass}">${t.action}</td>
+            <td>${fmtUSD(t.amount_usd)}</td>
+            <td>${t.estimated_shares ?? '—'}</td>
+            <td class="text-slate-400">${t.rationale ?? ''}</td>`;
+          body.appendChild(tr);
+        }
+
+        const rejectedNote = document.getElementById('rejected-note');
+        if (data.rejected && data.rejected.length > 0) {
+          rejectedNote.textContent = `${data.rejected.length} trade(s) rejected by guardrails: ` +
+            data.rejected.map(r => `${r.action} ${r.ticker} (${r.rejection_reason})`).join('; ');
+          rejectedNote.classList.remove('hidden');
+        } else {
+          rejectedNote.classList.add('hidden');
+        }
+
+        document.getElementById('proposal-section').classList.remove('hidden');
+        document.getElementById('execution-section').classList.add('hidden');
+      } catch (e) {
+        showError(e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Analyze with Claude';
+      }
+    }
+
+    async function execute() {
+      clearError();
+      if (!currentBatchId) return;
+      if (!confirm('Submit these trades to Public.com now?')) return;
+
+      const btn = document.getElementById('approve-btn');
+      btn.disabled = true;
+      btn.textContent = 'Executing…';
+
+      const section = document.getElementById('execution-section');
+      const liveLog = document.getElementById('live-log');
+      const body = document.getElementById('log-body');
+      liveLog.innerHTML = '';
+      body.innerHTML = '';
+      section.classList.remove('hidden');
+
+      const appendLiveLine = (text) => {
+        const line = document.createElement('div');
+        line.textContent = text;
+        liveLog.appendChild(line);
+        liveLog.scrollTop = liveLog.scrollHeight;
+      };
+
+      const appendTradeRow = (entry) => {
+        const tr = document.createElement('tr');
+        const ok = ['FILLED', 'DRY_RUN'].includes(entry.status);
+        const statusClass = ok ? 'text-emerald-400' : (entry.status === 'PARTIALLY_FILLED' ? 'text-amber-400' : 'text-red-400');
+        tr.innerHTML = `
+          <td class="py-1.5">${entry.action}</td>
+          <td>${entry.ticker}</td>
+          <td>${fmtUSD(entry.amount_usd)}</td>
+          <td class="${statusClass} font-medium">${entry.status}</td>
+          <td class="text-slate-400">${entry.detail ?? ''}</td>`;
+        body.appendChild(tr);
+      };
+
+      try {
+        const res = await fetch('/api/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batch_id: currentBatchId }),
+        });
+        if (!res.ok || !res.body) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `execution failed (HTTP ${res.status})`);
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 1);
+            if (!line) continue;
+            const evt = JSON.parse(line);
+            if (evt.type === 'info') {
+              appendLiveLine(evt.message);
+            } else if (evt.type === 'trade_result') {
+              appendTradeRow(evt);
+              appendLiveLine(`  -> ${evt.action} ${evt.ticker}: ${evt.status}`);
+            } else if (evt.type === 'error') {
+              appendLiveLine(`ERROR: ${evt.message}`);
+              showError(evt.message);
+            } else if (evt.type === 'done') {
+              if (evt.warning) appendLiveLine(`WARNING: ${evt.warning}`);
+              appendLiveLine('Done.');
+            }
+          }
+        }
+        currentBatchId = null;
+        currentTradeCount = 0;
+        updateGithubModeHint();
+        loadState();
+      } catch (e) {
+        showError(e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Approve & Execute Actions';
+      }
+    }
+
+    // -- Cloud-native scheduling (Contents API queue — the only scheduling
+    // mechanism in this app; the Mac can shut down once this commits) -----
+
+    function showCloudScheduleStatus(msg, isError) {
+      const el = document.getElementById('cloud-schedule-status-msg');
+      el.textContent = msg;
+      el.className = 'text-xs mt-3 ' + (isError ? 'text-red-400' : 'text-emerald-400');
+      el.classList.remove('hidden');
+    }
+
+    async function scheduleCloudExecution(customDatetime) {
+      clearError();
+      if (!currentBatchId) { showCloudScheduleStatus('Run Analyze first.', true); return; }
+      const dryRun = document.getElementById('cloud-schedule-dry-run').checked;
+      if (!dryRun && !confirm('This commits your reviewed trades to run LIVE (non-dry-run) in the cloud. Continue?')) return;
+      try {
+        const res = await fetch('/api/cloud-schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batch_id: currentBatchId, custom_datetime: customDatetime || null, dry_run: dryRun }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'cloud scheduling failed');
+        showCloudScheduleStatus(`Committed to the repo — scheduled for ${fmtET(data.task.scheduled_for)}. Safe to shut down this Mac now.`, false);
+        loadCloudTask();
+      } catch (e) {
+        showCloudScheduleStatus(e.message, true);
+      }
+    }
+
+    document.getElementById('cloud-schedule-open-btn').addEventListener('click', () => scheduleCloudExecution(null));
+    document.getElementById('cloud-schedule-custom-btn').addEventListener('click', () => {
+      const dt = document.getElementById('cloud-schedule-custom-datetime').value;
+      if (!dt) { showCloudScheduleStatus('Pick a date/time first.', true); return; }
+      scheduleCloudExecution(dt);
+    });
+
+    async function loadCloudTask() {
+      try {
+        const res = await fetch('/api/cloud-schedule');
+        const data = await res.json();
+        const section = document.getElementById('cloud-task-section');
+        const link = document.getElementById('cloud-actions-link');
+        if (data.actions_url) link.href = data.actions_url;
+
+        if (!res.ok || !data.task) {
+          section.classList.add('hidden');
+          return;
+        }
+        const task = data.task;
+        section.classList.remove('hidden');
+        document.getElementById('cloud-task-time').textContent = fmtET(task.scheduled_for);
+        const statusEl = document.getElementById('cloud-task-status');
+        statusEl.textContent = task.status + (task.dry_run ? ' (dry run)' : ' (LIVE)');
+        statusEl.className = 'font-medium ' + (task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : task.status === 'in_progress' ? 'text-amber-400' : 'text-slate-200');
+        document.getElementById('cloud-task-sell').textContent = fmtUSD(task.total_sell_usd);
+        document.getElementById('cloud-task-buy').textContent = fmtUSD(task.total_buy_usd);
+
+        const cancelBtn = document.getElementById('cloud-task-cancel-btn');
+        const note = document.getElementById('cloud-task-note');
+        if (task.status === 'pending') {
+          cancelBtn.classList.remove('hidden');
+          note.textContent = '';
+        } else {
+          cancelBtn.classList.add('hidden');
+          note.textContent = task.status === 'in_progress'
+            ? 'Already running in GitHub Actions — cancelling here won\'t stop it. Use the Actions link above if you need to intervene.'
+            : `Finished (${task.status}). This will clear the next time you schedule a new cloud task.`;
+        }
+      } catch (e) { /* non-fatal */ }
+    }
+
+    document.getElementById('cloud-task-cancel-btn').addEventListener('click', async () => {
+      if (!confirm('Cancel the scheduled cloud task?')) return;
+      try {
+        const res = await fetch('/api/cloud-schedule', { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'cancel failed');
+        loadCloudTask();
+      } catch (e) {
+        showCloudScheduleStatus(e.message, true);
+      }
+    });
+
+    // -- GitHub Cloud Automation --------------------------------------
+
+    function showGithubStatus(msg, isError) {
+      const el = document.getElementById('gh-status-msg');
+      el.textContent = msg;
+      el.className = 'text-xs mt-3 ' + (isError ? 'text-red-400' : 'text-emerald-400');
+    }
+
+    async function loadGithubStatus() {
+      try {
+        const res = await fetch('/api/github/status');
+        const data = await res.json();
+        const badge = document.getElementById('gh-status-badge');
+        badge.textContent = data.configured ? '✓ configured' : 'not configured — set GH_PAT in .env';
+        badge.className = 'text-[11px] px-2 py-0.5 rounded-full border ' +
+          (data.configured ? 'border-emerald-600 text-emerald-400' : 'border-amber-600 text-amber-400');
+      } catch (e) { /* non-fatal */ }
+    }
+
+    function updateGithubModeHint() {
+      const hint = document.getElementById('gh-mode-hint');
+      hint.textContent = currentBatchId
+        ? `Will dispatch the ${currentTradeCount} reviewed trade(s) from your last Analyze — Claude is skipped entirely in GitHub Actions.`
+        : 'Uses the Mode / Budget / Risk / Instructions selected above — Claude runs fresh in GitHub Actions. Runs independent of this browser tab.';
+    }
+
+    document.getElementById('gh-trigger-btn').addEventListener('click', async () => {
+      clearError();
+      const sel = currentModeSelection();
+      const dryRun = document.getElementById('gh-dry-run').checked;
+      if (!dryRun && !confirm(currentBatchId
+        ? 'This will dispatch your reviewed trades to GitHub Actions LIVE (non-dry-run). Continue?'
+        : 'This will dispatch a LIVE (non-dry-run) fresh analysis to GitHub Actions. Continue?')) return;
+      try {
+        const res = await fetch('/api/github/trigger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: sel.sub_mode || sel.mode, dry_run: dryRun, budget: sel.budget_usd, batch_id: currentBatchId }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'dispatch failed');
+        showGithubStatus(`Dispatched${data.pre_approved ? ' (pre-approved trades)' : ''} to GitHub Actions (${data.repo}) at ${new Date(data.dispatched_at).toLocaleTimeString()}.`, false);
+      } catch (e) {
+        showGithubStatus(e.message, true);
+      }
+    });
+
+    document.getElementById('refresh-btn').addEventListener('click', loadState);
+    document.getElementById('analyze-btn').addEventListener('click', analyze);
+    document.getElementById('approve-btn').addEventListener('click', execute);
+
+    loadState();
+    loadGithubStatus();
+    loadCloudTask();
+    setInterval(loadCloudTask, 30000);
+  </script>
+</body>
+</html>

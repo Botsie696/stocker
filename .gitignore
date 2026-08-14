@@ -1,0 +1,23 @@
+# Secrets — never commit these
+.env
+secretkey
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# OS
+.DS_Store
+
+# Local Claude Code tooling config, not project source
+.claude/
+
+# Logs
+*.log
+
+# Runtime state (not source)
+pending_trades.json

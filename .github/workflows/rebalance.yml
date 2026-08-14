@@ -1,0 +1,114 @@
+name: Rebalance
+
+# Two trigger types, and they mean different things:
+#   workflow_dispatch — manual/API trigger (the dashboard's "Run Now"
+#     button). Always proceeds straight to execution using the given
+#     mode/trades_json inputs.
+#   schedule (cron)   — the ONLY scheduling mechanism in this app. Polls
+#     queue/scheduled_task.json, committed to this repo via the GitHub
+#     Contents API when you click "Schedule for Market Open (Cloud)" on
+#     the dashboard. This is what survives your Mac being fully powered
+#     off: once the file is committed, everything from here runs entirely
+#     on GitHub's infrastructure — run_headless.py itself reads the queue
+#     file, checks whether it's actually due, and exits cleanly (near
+#     instantly, no real cost) if there's nothing to do.
+#
+# Cron caveats worth knowing (this is GitHub's documented behavior, not a
+# bug in this workflow): scheduled triggers are best-effort and can be
+# delayed by several minutes during high platform load, and GitHub
+# AUTOMATICALLY DISABLES scheduled workflows on a repo after 60 days with
+# no other repository activity. Since scheduling/cancelling a task itself
+# commits to this repo, normal use of the feature keeps it alive — but a
+# schedule set once and never touched again for 60+ days could go silently
+# dead. There's no way to fully engineer around this from inside the
+# workflow; it's a platform limit.
+#
+# GitHub cron is UTC-only and can't itself track US Eastern's EST/EDT
+# shift. A single daily cron line at a fixed UTC time (e.g. 13:35 for
+# 9:35am EDT) would silently miss market open for roughly half the year,
+# once EST (UTC-5) takes over from EDT (UTC-4) — the fixed UTC time would
+# then fire an hour before the market even opens, see nothing due yet, and
+# not check again until the following day. The two cron lines below cover
+# BOTH possible UTC offsets so this can't happen; the *actual* "is it
+# really time" decision is made in Python (run_headless.py's
+# run_from_queue()) using the real scheduled_for timestamp from the queue
+# file, so DST transitions can never cause a wrong-time fire — the cron
+# lines only control how often we bother to check.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Trading mode (e.g. mode1 .. mode8, mode4a, mode4b) — not needed if trades_json is set'
+        required: false
+        type: string
+      dry_run:
+        description: 'Simulate only — must be explicitly set to false to place real orders'
+        required: true
+        type: choice
+        options: ['true', 'false']
+        default: 'true'
+      budget:
+        description: 'Dollar budget override (optional; required for Mode 3 / Mode 4B)'
+        required: false
+        type: string
+      trades_json:
+        description: 'Pre-approved trade batch JSON (from the dashboard) — when set, Claude is skipped entirely and these exact trades run after guardrail re-validation'
+        required: false
+        type: string
+  schedule:
+    - cron: '35 13 * * 1-5'  # 9:35am EDT (Mar-Nov, UTC-4)
+    - cron: '35 14 * * 1-5'  # 9:35am EST (Nov-Mar, UTC-5)
+
+# Never cancel a run that's mid-flight — a cancelled run could be killed
+# between placing a SELL and its corresponding BUY. New dispatches/polls
+# queue behind an in-progress run instead of racing it.
+concurrency:
+  group: rebalance
+  cancel-in-progress: false
+
+permissions:
+  # contents: write is required to claim (flip pending -> in_progress) and
+  # later update (-> completed/failed) queue/scheduled_task.json via the
+  # Contents API, using the workflow's own built-in GITHUB_TOKEN — your
+  # personal GH_PAT is never needed inside the Actions run itself for this.
+  contents: write
+
+jobs:
+  rebalance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PUBLIC_API_SECRET: ${{ secrets.PUBLIC_API_SECRET }}
+      PUBLIC_ACCOUNT_ID: ${{ secrets.PUBLIC_ACCOUNT_ID }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      FLASK_SECRET_KEY: ${{ secrets.FLASK_SECRET_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+      # Raw portfolio/account JSON would otherwise print to the run log,
+      # which anyone with read access to this repo's Actions tab can see.
+      DEBUG_API: "false"
+      # Inputs go through env vars, not shell interpolation into `run:` —
+      # trades_json is a JSON blob containing double-quotes, and
+      # interpolating any workflow_dispatch input directly into a shell
+      # string (e.g. `--mode "${{ inputs.mode }}"`) is the classic GitHub
+      # Actions script-injection pattern. On a schedule-triggered run these
+      # `inputs.*` are simply empty, which correctly falls through to
+      # run_headless.py's cloud-queue path instead.
+      MODE: ${{ inputs.mode }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      BUDGET: ${{ inputs.budget }}
+      TRADES_JSON: ${{ inputs.trades_json }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run rebalance
+        run: python run_headless.py
